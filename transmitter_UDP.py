@@ -27,7 +27,7 @@ while True:
     frame = picam2.capture_array()
 
     # Optional: Process frame
-    #frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
     # Serialize frame
     data = pickle.dumps(frame)
@@ -35,12 +35,6 @@ while True:
     #size chosen because of the MTU size of 1500 bytes
     frame_size = 1450
     data_length = len(data) 
-    nr_split_frames = data_length // frame_size
-    #print(nr_split_frames)
-    leftover_frames = data_length % frame_size
-
-    if leftover_frames !=0:
-        nr_split_frames += 1
 
     #4 byte header including length of message, 3 byte for data_length
     header_1 = b'L' + data_length.to_bytes(3, 'big')
