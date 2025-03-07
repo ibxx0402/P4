@@ -15,8 +15,6 @@ port = 65432
 address = (host_ip, port)
 s.bind((client_ip, port))
 
-
-
 picam2 = Picamera2()
 config = picam2.create_video_configuration(main={"size": (320, 240)}, lores={"size": (320, 240)}, display="main")
 picam2.configure(config)
@@ -29,13 +27,13 @@ while True:
     frame = picam2.capture_array()
 
     # Optional: Process frame
-    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    #frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     # Serialize frame
     data = pickle.dumps(frame)
 
-    frame_size = 4096
-    end_index = 0
+    #size chosen because of the MTU size of 1500 bytes
+    frame_size = 1450
     data_length = len(data) 
     nr_split_frames = data_length // frame_size
     #print(nr_split_frames)
@@ -48,26 +46,24 @@ while True:
     header_1 = b'L' + data_length.to_bytes(3, 'big')
     s.sendto(header_1, address)
 
-    #2 byte header including nr of messages 
-    header_2 = b'S' + nr_split_frames.to_bytes(1, 'big')
-    s.sendto(header_2, address)
+    bytes_sent = 0
+    
+    # Pre-allocate the view once and reuse
+    data_view = memoryview(bytearray(frame_size))
 
-    #ack that matches header files 
-    while True:
-        if s.recv(6) == header_1 + header_2:
+    try:
+        while True:
+            s.settimeout(0.1)
+            if s.recv(4) == header_1:
 
-            for i in range(nr_split_frames):
-                start_index = end_index
-
-                if (i+1) * frame_size > data_length:
-                    end_index += leftover_frames
-                
-                else:
-                    end_index += frame_size
-                
-                split_data = data[start_index : end_index]
-                s.sendto(split_data, (host_ip, port))
-            break
-        else: 
-            print("exit")
-            exit()
+                view = memoryview(data)
+                for i in range(0, data_length, frame_size):
+                    split_data = view[i:min(i+frame_size, data_length)]
+                    #print(len(split_data)) 
+                    bytes_sent += s.sendto(split_data, (host_ip, port))
+                break
+             
+            else:
+                break
+    except socket.timeout:
+        continue
