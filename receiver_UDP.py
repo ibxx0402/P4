@@ -1,38 +1,50 @@
 import cv2
-import numpy as np
 import socket
 import pickle
+import numpy as np
 
-BUFF_SIZE = 65536
+host = "192.168.0.106"
+port = 5000
+max_length = 65540
+
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, BUFF_SIZE)
-host_name = socket.gethostname()
-host_ip = "192.168.0.111"
-client_ip = "192.168.0.101"
-port = 65432
-socket_address = (host_ip, port)
-sock.bind(socket_address)
+sock.bind((host, port))
 
+frame_info = None
+buffer = None
+frame = None
 
+print("-> waiting for connection")
 while True:
-    sock.settimeout(50)
-    header_1 = sock.recv(4)
+    data, address = sock.recvfrom(max_length)
+    frame_info = pickle.loads(data)
 
-    if header_1[:1] == b'L':
-        sock.sendto(header_1, (client_ip, port))
-        data = b''
-        
-        msg_size = int.from_bytes(header_1[1:], 'big')
-        
-        try:
-            while len(data) < msg_size:
-                sock.settimeout(0.1)
-                data += sock.recv(1450)
-            
-            frame = pickle.loads(data)
-            cv2.imshow('Video Stream', frame)
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord('q'):
-                break
-        except Exception as e:
-            continue
+    if frame_info:
+        nums_of_packs = frame_info["packs"]
+        break
+
+print("-> Connection established")
+while True:
+    try:
+        for i in range(nums_of_packs):
+            data, address = sock.recvfrom(max_length)
+
+            if i == 0:
+                buffer = data
+            else:
+                buffer += data
+
+        frame = np.frombuffer(buffer, dtype=np.uint8)
+        frame = frame.reshape(frame.shape[0], 1)
+
+        frame = cv2.imdecode(frame, cv2.IMREAD_COLOR)
+        #frame = cv2.flip(frame, 1)
+
+        cv2.imshow("Stream", frame)
+        if cv2.waitKey(1) == 27:
+            break
+    except Exception as e:
+        print(e)
+        continue
+                
+print("goodbye")
