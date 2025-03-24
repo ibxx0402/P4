@@ -1,0 +1,7 @@
+{
+  "fast_cv_denoise": {
+      "diameter": 9,
+      "sigmaColor": 50,
+      "sigmaSpace": 50
+    }
+}
