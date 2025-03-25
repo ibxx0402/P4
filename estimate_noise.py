@@ -1,4 +1,6 @@
 #based on https://stackoverflow.com/questions/2440504/noise-estimation-noise-measurement-in-image
+#Logic https://www.sciencedirect.com/science/article/pii/S1077314296900600?via%3Dihub
+
 
 import cv2
 import numpy as np
