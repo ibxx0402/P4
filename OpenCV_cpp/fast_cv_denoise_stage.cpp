@@ -68,10 +68,37 @@ bool FastCVDenoise::Process(CompletedRequestPtr &completed_request)
 	uint8_t *ptr = (uint8_t *)buffer.data();
 
 	//Everything beyond this point is image processing...
-
 	Mat src = Mat(info.height, info.width, CV_8UC1, ptr, info.stride);
 	Mat dst;
 
+	// Laplacian kernel
+	cv::Mat kernel = (cv::Mat_<float>(3, 3) << 
+        1, -2, 1,
+        -2, 4, -2,
+        1, -2, 1
+    );
+
+	// The source is already grayscale (Y channel from YUV420)
+	cv::Mat greyMat = src.clone();
+
+	// Convolution result matrix
+	cv::Mat convResult;
+    cv::filter2D(greyMat, convResult, CV_32F, kernel);
+
+	// Calculate absolute values and sum
+    cv::Mat absConvResult;
+    cv::convertScaleAbs(convResult, absConvResult);
+
+    // Calculate sigma 
+    double sigma = cv::sum(absConvResult)[0];
+    int width = greyMat.cols, height = greyMat.rows;
+    
+    // Normalize with mathematical adjustment similar to Python version
+    sigma = sigma * std::sqrt(0.5 * M_PI) / (6.0 * (width - 2) * (height - 2));
+	
+	std::cout << "Sigma: " << sigma << std::endl;
+
+	// Apply the bilateral filter
 	bilateralFilter(src, dst, diameter_, sigmaColor_, sigmaSpace_);
 
 	// Copy the filtered image back to the original buffer
