@@ -1,0 +1,7 @@
+/Users/ibleminen/Library/CloudStorage/OneDrive-AalborgUniversitet/VISUAL STUDIO/img_server/c++/CMakeFiles/img_server.dir
+/Users/ibleminen/Library/CloudStorage/OneDrive-AalborgUniversitet/VISUAL STUDIO/img_server/c++/CMakeFiles/edit_cache.dir
+/Users/ibleminen/Library/CloudStorage/OneDrive-AalborgUniversitet/VISUAL STUDIO/img_server/c++/CMakeFiles/rebuild_cache.dir
+/Users/ibleminen/Library/CloudStorage/OneDrive-AalborgUniversitet/VISUAL STUDIO/img_server/c++/CMakeFiles/list_install_components.dir
+/Users/ibleminen/Library/CloudStorage/OneDrive-AalborgUniversitet/VISUAL STUDIO/img_server/c++/CMakeFiles/install.dir
+/Users/ibleminen/Library/CloudStorage/OneDrive-AalborgUniversitet/VISUAL STUDIO/img_server/c++/CMakeFiles/install/local.dir
+/Users/ibleminen/Library/CloudStorage/OneDrive-AalborgUniversitet/VISUAL STUDIO/img_server/c++/CMakeFiles/install/strip.dir
