@@ -47,7 +47,7 @@ double estimateNoise(const cv::Mat& image) {
 }
 
 int main() {
-    string imagePath = "c++/image.jpg";
+    string imagePath = "tests/time_test/main.cpp";
     src = cv::imread(imagePath);
      auto start = high_resolution_clock::now();
 
