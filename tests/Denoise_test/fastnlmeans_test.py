@@ -88,12 +88,12 @@ def main():
     h_color_list = [1, 9, 1]
 
     template_size_list = [1, 9, 2] 
-    search_size_list = [5, 11, 2] 
+    search_size_list = [5, 25, 2] 
 
     noise_strength_list = [5, 10, 15, 20]
 
     for noise_strength in noise_strength_list:
-        img_path = "tests/img"
+        img_path = "img"
         denoise_score_array, h_total, h_color_total = initialize(h_list, h_color_list, template_size_list, search_size_list)
         denoise_score_array, image_count, image_estimate_noise_array = process_images(img_path, h_list, h_total, h_color_list, h_color_total, template_size_list, search_size_list, noise_strength, denoise_score_array)
 
