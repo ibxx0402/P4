@@ -6,7 +6,7 @@ import numpy as np
 
 
 def gpu_ssim(img1, img2):
-    device = torch.device("mps") #change cuda to mps for apple silicon
+    device = torch.device("cuda") #change cuda to mps for apple silicon
  
     
     # Convert from BGR to RGB and normalize to [0, 1]
