@@ -139,10 +139,19 @@ int main() {
     }
 
     // Initialize encoder
-    m_ffmpeg.encoder_codec = avcodec_find_encoder(AV_CODEC_ID_H264);
+    m_ffmpeg.encoder_codec = avcodec_find_encoder_by_name("h264_videotoolbox");  // For Mac
+    // If not on Mac, use platform-specific hardware encoders:
+    // - NVIDIA: "h264_nvenc" 
+    // - Intel: "h264_qsv"
+    // - AMD: "h264_amf"
+
     if (!m_ffmpeg.encoder_codec) {
-        std::cerr << "Encoder codec not found" << std::endl;
-        exit(1);
+        std::cerr << "Hardware encoder not found, falling back to software" << std::endl;
+        m_ffmpeg.encoder_codec = avcodec_find_encoder(AV_CODEC_ID_H264);
+        if (!m_ffmpeg.encoder_codec) {
+            std::cerr << "Encoder codec not found" << std::endl;
+            exit(1);
+        }
     }
 
     m_ffmpeg.encoder_context = avcodec_alloc_context3(m_ffmpeg.encoder_codec);
@@ -161,9 +170,34 @@ int main() {
     m_ffmpeg.encoder_context->max_b_frames = 1;
     m_ffmpeg.encoder_context->pix_fmt = AV_PIX_FMT_YUV420P;
 
-    if (avcodec_open2(m_ffmpeg.encoder_context, m_ffmpeg.encoder_codec, nullptr) < 0) {
+    // Apply suggested code changes for encoder context
+    AVDictionary* opts = nullptr;
+    // Set ultrafast preset for maximum speed (at cost of compression efficiency)
+    av_dict_set(&opts, "preset", "ultrafast", 0);
+    av_dict_set(&opts, "tune", "zerolatency", 0);
+
+    // Modify your encoder context for speed
+    m_ffmpeg.encoder_context->max_b_frames = 0;  // B-frames add latency
+    m_ffmpeg.encoder_context->gop_size = 15;     // Adjust based on needs
+    m_ffmpeg.encoder_context->refs = 1;          // Fewer reference frames = faster
+
+    // Then open with these options
+    if (avcodec_open2(m_ffmpeg.encoder_context, m_ffmpeg.encoder_codec, &opts) < 0) {
         std::cerr << "Could not open encoder" << std::endl;
         exit(1);
+    }
+    av_dict_free(&opts);
+
+    // Add after encoder initialization
+    if (m_ffmpeg.encoder_codec) {
+        const char* codec_name = m_ffmpeg.encoder_codec->name;
+        std::cout << "Using encoder: " << codec_name;
+        if (strcmp(codec_name, "h264_videotoolbox") == 0) {
+            std::cout << " (HARDWARE ACCELERATED)";
+        } else {
+            std::cout << " (SOFTWARE)";
+        }
+        std::cout << std::endl;
     }
 
     // Allocate frame for encoding

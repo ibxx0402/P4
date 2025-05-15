@@ -8,6 +8,8 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <vector>
+#include <queue>
+#include <map>
 #include <opencv2/opencv.hpp>
 
 // FFmpeg includes
@@ -22,6 +24,7 @@ extern "C" {
 #define PORT 9995
 #define CLIENT_PORT 9998
 #define MAXLINE 65507 // Max UDP packet size
+#define MAX_BUFFER_SIZE 1000000 // 1MB max buffer size
 
 struct FFmpegContext {
     const AVCodec* codec;
@@ -29,12 +32,21 @@ struct FFmpegContext {
     AVFrame* frame_yuv;
     AVFrame* frame_bgr;
     SwsContext* sws_ctx;
+    uint8_t* bgr_buffer;  // Persistent buffer for BGR conversion
+    int bgr_buffer_size;
 };
 
-FFmpegContext m_ffmpeg;
+// Structure to hold frame reconstruction data
+struct FrameData {
+    std::vector<uint8_t> data;
+    size_t expected_size;
+    uint32_t timestamp;
+    bool complete;
+};
 
 int main() {
     // Initialize FFmpeg
+    FFmpegContext m_ffmpeg = {};
     avformat_network_init();
     m_ffmpeg.codec = avcodec_find_decoder(AV_CODEC_ID_H264);
     if (!m_ffmpeg.codec) {
@@ -46,6 +58,12 @@ int main() {
         fprintf(stderr, "Could not allocate video codec context\n");
         exit(1);
     }
+    
+    // Add error resilience flags
+    m_ffmpeg.context->err_recognition = AV_EF_CAREFUL;
+    m_ffmpeg.context->flags |= AV_CODEC_FLAG_LOW_DELAY;
+    m_ffmpeg.context->flags2 |= AV_CODEC_FLAG2_CHUNKS;
+    
     if (avcodec_open2(m_ffmpeg.context, m_ffmpeg.codec, nullptr) < 0) {
         fprintf(stderr, "Could not open codec\n");
         exit(1);
@@ -57,6 +75,9 @@ int main() {
         fprintf(stderr, "Could not allocate video frames\n");
         exit(1);
     }
+    
+    m_ffmpeg.bgr_buffer = nullptr;
+    m_ffmpeg.bgr_buffer_size = 0;
 
     // Create socket
     int sockfd;
@@ -67,6 +88,20 @@ int main() {
     if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
         perror("socket creation failed");
         exit(EXIT_FAILURE);
+    }
+    
+    // Set socket options for better performance
+    int rcvbuf = 8 * 1024 * 1024; // 8MB receive buffer
+    if (setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf)) < 0) {
+        perror("setsockopt(SO_RCVBUF) failed");
+    }
+    
+    // Set timeout on receive operations
+    struct timeval tv;
+    tv.tv_sec = 5;  // 5 second timeout
+    tv.tv_usec = 0;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+        perror("setsockopt(SO_RCVTIMEO) failed");
     }
 
     memset(&server_address, 0, sizeof(server_address));
@@ -92,51 +127,198 @@ int main() {
     std::cout << "Client registration message sent." << std::endl;
 
     int data = recvfrom(sockfd, buffer, MAXLINE, 0, (struct sockaddr*)&from_addr, &from_len);
+    if (data < 0) {
+        perror("recvfrom failed during registration");
+        close(sockfd);
+        exit(EXIT_FAILURE);
+    }
     buffer[data] = '\0';
     std::cout << "Client: Received registration confirmation: " << buffer << std::endl;
 
     std::cout << "Client: Waiting for video..." << std::endl;
 
-    std::vector<uint8_t> h264_buffer;
+    // Frame reconstruction map - keeps track of partial frames by timestamp
+    std::map<uint32_t, FrameData> frame_map;
+    uint32_t current_timestamp = 0;
+    std::queue<std::vector<uint8_t>> complete_frames;
 
     while (true) {
         // Receive video data
-        int data = recvfrom(sockfd, buffer, MAXLINE, 0, (struct sockaddr*)&from_addr, &from_len);
+        data = recvfrom(sockfd, buffer, MAXLINE, 0, (struct sockaddr*)&from_addr, &from_len);
         if (data < 0) {
-            perror("recvfrom failed");
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                std::cout << "Receive timeout - no data available" << std::endl;
+                // Process any complete frames we may have
+                if (!complete_frames.empty()) {
+                    continue;
+                }
+            } else {
+                perror("recvfrom failed");
+            }
             continue;
         }
 
-        // Append received data to the buffer
-        h264_buffer.insert(h264_buffer.end(), buffer, buffer + data);
+        // Check if this is a header packet (8 bytes with frame info)
+        if (data == 8) {
+            uint32_t total_size = 
+                ((uint8_t)buffer[0] << 24) | 
+                ((uint8_t)buffer[1] << 16) | 
+                ((uint8_t)buffer[2] << 8) | 
+                (uint8_t)buffer[3];
+                
+            uint32_t timestamp = 
+                ((uint8_t)buffer[4] << 24) | 
+                ((uint8_t)buffer[5] << 16) | 
+                ((uint8_t)buffer[6] << 8) | 
+                (uint8_t)buffer[7];
+            
+            // Initialize a new frame entry
+            frame_map[timestamp] = {
+                .data = std::vector<uint8_t>(),
+                .expected_size = total_size,
+                .timestamp = timestamp,
+                .complete = false
+            };
+            
+            frame_map[timestamp].data.reserve(total_size);
+            current_timestamp = timestamp;
+            
+            // Start frame reconstruction
+            continue;
+        }
+        
+        // If we have a current timestamp, add data to that frame
+        if (current_timestamp > 0 && frame_map.find(current_timestamp) != frame_map.end()) {
+            auto& frame = frame_map[current_timestamp];
+            
+            // Add received data to the frame buffer
+            frame.data.insert(frame.data.end(), buffer, buffer + data);
+            
+            // Check if frame is complete
+            if (frame.data.size() >= frame.expected_size) {
+                frame.complete = true;
+                
+                // Move to complete frames queue
+                complete_frames.push(frame.data);
+                
+                // Remove from map to free memory
+                frame_map.erase(current_timestamp);
+                current_timestamp = 0;
+            }
+        }
+        
+        // Process complete frames
+        while (!complete_frames.empty()) {
+            std::vector<uint8_t>& h264_buffer = complete_frames.front();
+            
+            // Create packet for decoding
+            AVPacket* packet = av_packet_alloc();
+            if (!packet) {
+                std::cerr << "Failed to allocate packet" << std::endl;
+                complete_frames.pop();
+                continue;
+            }
+            
+            packet->data = h264_buffer.data();
+            packet->size = h264_buffer.size();
 
-        // Decode the video packet
-        AVPacket* packet = av_packet_alloc();
-        packet->data = h264_buffer.data();
-        packet->size = h264_buffer.size();
+            int send_result = avcodec_send_packet(m_ffmpeg.context, packet);
+            if (send_result < 0) {
+                std::cerr << "Error sending packet: " << send_result << std::endl;
+                // Try to recover from errors
+                if (send_result == AVERROR_INVALIDDATA) {
+                    avcodec_flush_buffers(m_ffmpeg.context);
+                }
+                av_packet_free(&packet);
+                complete_frames.pop();
+                continue;
+            }
 
-        if (avcodec_send_packet(m_ffmpeg.context, packet) == 0) {
+            bool frame_decoded = false;
             while (avcodec_receive_frame(m_ffmpeg.context, m_ffmpeg.frame_yuv) == 0) {
-                // Directly create an OpenCV Mat from the received BGR frame
-                cv::Mat frame(m_ffmpeg.context->height, m_ffmpeg.context->width, CV_8UC3, m_ffmpeg.frame_yuv->data[0], m_ffmpeg.frame_yuv->linesize[0]);
+                frame_decoded = true;
+                
+                // Initialize conversion context if needed
+                if (!m_ffmpeg.sws_ctx) {
+                    m_ffmpeg.sws_ctx = sws_getContext(
+                        m_ffmpeg.context->width, m_ffmpeg.context->height, m_ffmpeg.context->pix_fmt,
+                        m_ffmpeg.context->width, m_ffmpeg.context->height, AV_PIX_FMT_BGR24,
+                        SWS_BILINEAR, nullptr, nullptr, nullptr);
+                }
+
+                // Allocate BGR buffer just once and reuse
+                int required_size = av_image_get_buffer_size(
+                    AV_PIX_FMT_BGR24, m_ffmpeg.context->width, m_ffmpeg.context->height, 1);
+                    
+                if (required_size > m_ffmpeg.bgr_buffer_size) {
+                    if (m_ffmpeg.bgr_buffer) {
+                        av_free(m_ffmpeg.bgr_buffer);
+                    }
+                    m_ffmpeg.bgr_buffer = (uint8_t*)av_malloc(required_size * sizeof(uint8_t));
+                    m_ffmpeg.bgr_buffer_size = required_size;
+                    
+                    // Set up BGR frame with the buffer
+                    av_image_fill_arrays(
+                        m_ffmpeg.frame_bgr->data, m_ffmpeg.frame_bgr->linesize,
+                        m_ffmpeg.bgr_buffer, AV_PIX_FMT_BGR24,
+                        m_ffmpeg.context->width, m_ffmpeg.context->height, 1);
+                }
+
+                // Convert YUV to BGR
+                sws_scale(
+                    m_ffmpeg.sws_ctx,
+                    m_ffmpeg.frame_yuv->data, m_ffmpeg.frame_yuv->linesize,
+                    0, m_ffmpeg.context->height,
+                    m_ffmpeg.frame_bgr->data, m_ffmpeg.frame_bgr->linesize
+                );
+
+                // Create OpenCV Mat (using existing buffer, no deep copy needed)
+                cv::Mat frame(
+                    m_ffmpeg.context->height,
+                    m_ffmpeg.context->width,
+                    CV_8UC3,
+                    m_ffmpeg.frame_bgr->data[0],
+                    m_ffmpeg.frame_bgr->linesize[0]
+                );
 
                 // Display the frame
                 cv::imshow("Video", frame);
-                if (cv::waitKey(1) == 27) { // Exit on 'ESC' key
-                    break;
+                int key = cv::waitKey(1);
+                if (key == 27) { // Exit on 'ESC' key
+                    // Clean up and exit
+                    if (m_ffmpeg.bgr_buffer) {
+                        av_free(m_ffmpeg.bgr_buffer);
+                    }
+                    av_frame_free(&m_ffmpeg.frame_yuv);
+                    av_frame_free(&m_ffmpeg.frame_bgr);
+                    avcodec_free_context(&m_ffmpeg.context);
+                    if (m_ffmpeg.sws_ctx) {
+                        sws_freeContext(m_ffmpeg.sws_ctx);
+                    }
+                    close(sockfd);
+                    av_packet_free(&packet);
+                    return 0;
                 }
             }
+            
+            av_packet_free(&packet);
+            complete_frames.pop();
         }
-
-        av_packet_free(&packet);
-
-        // Clear the buffer if it grows too large
-        if (h264_buffer.size() > 500000) {
-            h264_buffer.clear();
+        
+        // Clean up old incomplete frames (after 5 seconds)
+        for (auto it = frame_map.begin(); it != frame_map.end();) {
+            if (current_timestamp - it->first > 150) { // Assuming ~30fps, 5 seconds = 150 frames
+                it = frame_map.erase(it);
+            } else {
+                ++it;
+            }
         }
     }
 
     // Cleanup
+    if (m_ffmpeg.bgr_buffer) {
+        av_free(m_ffmpeg.bgr_buffer);
+    }
     av_frame_free(&m_ffmpeg.frame_yuv);
     av_frame_free(&m_ffmpeg.frame_bgr);
     avcodec_free_context(&m_ffmpeg.context);
