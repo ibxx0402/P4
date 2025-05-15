@@ -18,7 +18,7 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
-#define SERVER_IP "192.168.0.125"
+#define SERVER_IP "192.168.0.121"
 #define PORT 9995
 #define CLIENT_PORT 9998
 #define MAXLINE 65507 // Max UDP packet size
@@ -101,7 +101,7 @@ int main() {
 
     while (true) {
         // Receive video data
-        data = recvfrom(sockfd, buffer, MAXLINE, 0, (struct sockaddr*)&from_addr, &from_len);
+        int data = recvfrom(sockfd, buffer, MAXLINE, 0, (struct sockaddr*)&from_addr, &from_len);
         if (data < 0) {
             perror("recvfrom failed");
             continue;
@@ -117,35 +117,14 @@ int main() {
 
         if (avcodec_send_packet(m_ffmpeg.context, packet) == 0) {
             while (avcodec_receive_frame(m_ffmpeg.context, m_ffmpeg.frame_yuv) == 0) {
-                // Convert YUV to BGR for OpenCV
-                if (!m_ffmpeg.sws_ctx) {
-                    m_ffmpeg.sws_ctx = sws_getContext(
-                        m_ffmpeg.context->width, m_ffmpeg.context->height, m_ffmpeg.context->pix_fmt,
-                        m_ffmpeg.context->width, m_ffmpeg.context->height, AV_PIX_FMT_BGR24,
-                        SWS_BILINEAR, nullptr, nullptr, nullptr);
-                }
-
-                int num_bytes = av_image_get_buffer_size(AV_PIX_FMT_BGR24, m_ffmpeg.context->width, m_ffmpeg.context->height, 1);
-                uint8_t* bgr_buffer = (uint8_t*)av_malloc(num_bytes * sizeof(uint8_t));
-                av_image_fill_arrays(m_ffmpeg.frame_bgr->data, m_ffmpeg.frame_bgr->linesize, bgr_buffer, AV_PIX_FMT_BGR24, m_ffmpeg.context->width, m_ffmpeg.context->height, 1);
-
-                sws_scale(
-                    m_ffmpeg.sws_ctx,
-                    m_ffmpeg.frame_yuv->data, m_ffmpeg.frame_yuv->linesize,
-                    0, m_ffmpeg.context->height,
-                    m_ffmpeg.frame_bgr->data, m_ffmpeg.frame_bgr->linesize
-                );
-
-                // Create OpenCV Mat from the BGR frame
-                cv::Mat frame(m_ffmpeg.context->height, m_ffmpeg.context->width, CV_8UC3, m_ffmpeg.frame_bgr->data[0], m_ffmpeg.frame_bgr->linesize[0]);
+                // Directly create an OpenCV Mat from the received BGR frame
+                cv::Mat frame(m_ffmpeg.context->height, m_ffmpeg.context->width, CV_8UC3, m_ffmpeg.frame_yuv->data[0], m_ffmpeg.frame_yuv->linesize[0]);
 
                 // Display the frame
                 cv::imshow("Video", frame);
                 if (cv::waitKey(1) == 27) { // Exit on 'ESC' key
                     break;
                 }
-
-                av_free(bgr_buffer);
             }
         }
 
