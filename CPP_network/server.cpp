@@ -164,8 +164,8 @@ int main() {
     m_ffmpeg.encoder_context->bit_rate = 400000; // Adjust bitrate as needed
     m_ffmpeg.encoder_context->width = 1280;
     m_ffmpeg.encoder_context->height = 720;
-    m_ffmpeg.encoder_context->time_base = {1, 15}; // 15 fps
-    m_ffmpeg.encoder_context->framerate = {15, 1};
+    m_ffmpeg.encoder_context->time_base = {1, 60}; // 60 fps
+    m_ffmpeg.encoder_context->framerate = {60, 1};
     m_ffmpeg.encoder_context->gop_size = 10; // Group of pictures size
     m_ffmpeg.encoder_context->max_b_frames = 1;
     m_ffmpeg.encoder_context->pix_fmt = AV_PIX_FMT_YUV420P;
@@ -392,8 +392,7 @@ int main() {
                                 int receive_result = avcodec_receive_frame(m_ffmpeg.context, m_ffmpeg.frame_yuv);
                                 
                                 if (receive_result == 0) {
-									std::cout << "Decoded frame: " << m_ffmpeg.frame_yuv->width << "x" << m_ffmpeg.frame_yuv->height << std::endl;
-
+									// Successfully decoded a frame
                                     if (!m_ffmpeg.sws_ctx) {
                                         m_ffmpeg.sws_ctx = sws_getContext(
                                             m_ffmpeg.context->width, m_ffmpeg.context->height, m_ffmpeg.context->pix_fmt,
@@ -428,9 +427,22 @@ int main() {
                                         m_ffmpeg.frame_bgr->data, m_ffmpeg.frame_bgr->linesize
                                     );
 
-                                    // Create OpenCV Mat from the BGR frame - use a deep copy to avoid dependency on FFmpeg frame
-                                    cv::Mat frame(m_ffmpeg.context->height, m_ffmpeg.context->width, CV_8UC3);
-                                    memcpy(frame.data, m_ffmpeg.frame_bgr->data[0], frame.step * frame.rows);
+                                    // Create OpenCV Mat that references the FFmpeg frame data
+                                    cv::Mat frame(m_ffmpeg.context->height, 
+                                                 m_ffmpeg.context->width, 
+                                                 CV_8UC3, 
+                                                 m_ffmpeg.frame_bgr->data[0], 
+                                                 m_ffmpeg.frame_bgr->linesize[0]);
+
+                                    // Create destination Mat for filtered result
+                                    cv::Mat dst;
+
+                                    // Apply bilateral filter for denoising
+                                    cv::bilateralFilter(frame, dst, 8, 10, 2);
+									
+									// Copy the filtered data back to the FFmpeg frame
+                                    memcpy(m_ffmpeg.frame_bgr->data[0], dst.data, dst.step * dst.rows);
+                                    
 
                                     // Create a separate sws context for BGR to YUV conversion
                                     SwsContext* sws_ctx_encoder = sws_getContext(
@@ -509,8 +521,6 @@ int main() {
                                                     // Small delay to prevent overwhelming the network or receiver
                                                     usleep(1000); // 1ms delay between chunks
                                                 }
-                                                
-                                                std::cout << "Sent encoded frame: " << packet_size << " bytes to client" << std::endl;
                                             }
                                             
                                             // Unref the packet for reuse
