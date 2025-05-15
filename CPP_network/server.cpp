@@ -34,8 +34,14 @@ struct FFmpegContext {
     const AVCodec* codec;
     AVCodecContext* context;
     AVFrame* frame_yuv;
-    AVFrame* frame_bgr; // Add frame_bgr for BGR conversion
-    SwsContext* sws_ctx; // Add sws_ctx for scaling
+    AVFrame* frame_bgr;
+    SwsContext* sws_ctx;
+
+    // Encoding-specific fields
+    const AVCodec* encoder_codec;
+    AVCodecContext* encoder_context;
+    AVFrame* frame_encoder;
+    AVPacket* packet_encoder;
 };
 
 FFmpegContext m_ffmpeg;
@@ -127,6 +133,56 @@ int main() {
     m_ffmpeg.frame_bgr = av_frame_alloc();
     if (!m_ffmpeg.frame_bgr) {
         fprintf(stderr, "Could not allocate BGR frame\n");
+        exit(1);
+    }
+
+    // Initialize encoder
+    m_ffmpeg.encoder_codec = avcodec_find_encoder(AV_CODEC_ID_H264);
+    if (!m_ffmpeg.encoder_codec) {
+        std::cerr << "Encoder codec not found" << std::endl;
+        exit(1);
+    }
+
+    m_ffmpeg.encoder_context = avcodec_alloc_context3(m_ffmpeg.encoder_codec);
+    if (!m_ffmpeg.encoder_context) {
+        std::cerr << "Could not allocate encoder context" << std::endl;
+        exit(1);
+    }
+
+    // Set encoder parameters
+    m_ffmpeg.encoder_context->bit_rate = 400000; // Adjust bitrate as needed
+    m_ffmpeg.encoder_context->width = 1280;
+    m_ffmpeg.encoder_context->height = 720;
+    m_ffmpeg.encoder_context->time_base = {1, 15}; // 15 fps
+    m_ffmpeg.encoder_context->framerate = {15, 1};
+    m_ffmpeg.encoder_context->gop_size = 10; // Group of pictures size
+    m_ffmpeg.encoder_context->max_b_frames = 1;
+    m_ffmpeg.encoder_context->pix_fmt = AV_PIX_FMT_YUV420P;
+
+    if (avcodec_open2(m_ffmpeg.encoder_context, m_ffmpeg.encoder_codec, nullptr) < 0) {
+        std::cerr << "Could not open encoder" << std::endl;
+        exit(1);
+    }
+
+    // Allocate frame for encoding
+    m_ffmpeg.frame_encoder = av_frame_alloc();
+    if (!m_ffmpeg.frame_encoder) {
+        std::cerr << "Could not allocate encoder frame" << std::endl;
+        exit(1);
+    }
+    m_ffmpeg.frame_encoder->format = m_ffmpeg.encoder_context->pix_fmt;
+    m_ffmpeg.frame_encoder->width = m_ffmpeg.encoder_context->width;
+    m_ffmpeg.frame_encoder->height = m_ffmpeg.encoder_context->height;
+
+    if (av_frame_get_buffer(m_ffmpeg.frame_encoder, 32) < 0) {
+        std::cerr << "Could not allocate frame buffer for encoder" << std::endl;
+        exit(1);
+    }
+
+    // Allocate packet for encoded data
+    m_ffmpeg.packet_encoder = av_packet_alloc();
+    if (!m_ffmpeg.packet_encoder) {
+        std::cerr << "Could not allocate encoder packet" << std::endl;
         exit(1);
     }
 
@@ -301,7 +357,7 @@ int main() {
                                 
                                 if (receive_result == 0) {
 									std::cout << "Decoded frame: " << m_ffmpeg.frame_yuv->width << "x" << m_ffmpeg.frame_yuv->height << std::endl;
-                                     // Convert YUV to BGR for OpenCV
+
                                     if (!m_ffmpeg.sws_ctx) {
                                         m_ffmpeg.sws_ctx = sws_getContext(
                                             m_ffmpeg.context->width, m_ffmpeg.context->height, m_ffmpeg.context->pix_fmt,
@@ -309,10 +365,26 @@ int main() {
                                             SWS_BILINEAR, nullptr, nullptr, nullptr);
                                     }
 
-                                    int num_bytes = av_image_get_buffer_size(AV_PIX_FMT_BGR24, m_ffmpeg.context->width, m_ffmpeg.context->height, 1);
-                                    uint8_t* bgr_buffer = (uint8_t*)av_malloc(num_bytes * sizeof(uint8_t));
-                                    av_image_fill_arrays(m_ffmpeg.frame_bgr->data, m_ffmpeg.frame_bgr->linesize, bgr_buffer, AV_PIX_FMT_BGR24, m_ffmpeg.context->width, m_ffmpeg.context->height, 1);
+                                    // Properly initialize frame_bgr if not already done
+                                    if (!m_ffmpeg.frame_bgr->width || !m_ffmpeg.frame_bgr->height) {
+                                        m_ffmpeg.frame_bgr->format = AV_PIX_FMT_BGR24;
+                                        m_ffmpeg.frame_bgr->width = m_ffmpeg.context->width;
+                                        m_ffmpeg.frame_bgr->height = m_ffmpeg.context->height;
+                                        
+                                        // Allocate proper buffers for the frame
+                                        if (av_frame_get_buffer(m_ffmpeg.frame_bgr, 32) < 0) {
+                                            std::cerr << "Could not allocate BGR frame buffers" << std::endl;
+                                            // Handle error
+                                        }
+                                    }
 
+                                    // Make frame data writable
+                                    if (av_frame_make_writable(m_ffmpeg.frame_bgr) < 0) {
+                                        std::cerr << "Could not make BGR frame writable" << std::endl;
+                                        // Handle error
+                                    }
+
+                                    // Now do the conversion
                                     sws_scale(
                                         m_ffmpeg.sws_ctx,
                                         m_ffmpeg.frame_yuv->data, m_ffmpeg.frame_yuv->linesize,
@@ -320,10 +392,41 @@ int main() {
                                         m_ffmpeg.frame_bgr->data, m_ffmpeg.frame_bgr->linesize
                                     );
 
-                                    // Create OpenCV Mat from the BGR frame
-                                    cv::Mat frame(m_ffmpeg.context->height, m_ffmpeg.context->width, CV_8UC3, m_ffmpeg.frame_bgr->data[0], m_ffmpeg.frame_bgr->linesize[0]);
+                                    // Create OpenCV Mat from the BGR frame - use a deep copy to avoid dependency on FFmpeg frame
+                                    cv::Mat frame(m_ffmpeg.context->height, m_ffmpeg.context->width, CV_8UC3);
+                                    memcpy(frame.data, m_ffmpeg.frame_bgr->data[0], frame.step * frame.rows);
 
-                                    av_free(bgr_buffer);
+                                    cv::imshow("Video", frame);
+                                    if (cv::waitKey(1) == 27) { // Exit on 'ESC' key
+                                        break;
+                                    }
+
+                                    // Create a separate sws context for BGR to YUV conversion
+                                    SwsContext* sws_ctx_encoder = sws_getContext(
+                                        m_ffmpeg.encoder_context->width, m_ffmpeg.encoder_context->height, AV_PIX_FMT_BGR24,
+                                        m_ffmpeg.encoder_context->width, m_ffmpeg.encoder_context->height, m_ffmpeg.encoder_context->pix_fmt,
+                                        SWS_BILINEAR, nullptr, nullptr, nullptr);
+
+                                    // Make encoder frame writable
+                                    if (av_frame_make_writable(m_ffmpeg.frame_encoder) < 0) {
+                                        std::cerr << "Could not make encoder frame writable" << std::endl;
+                                        // Handle error
+                                    }
+
+                                    // Convert BGR to YUV for encoding
+                                    sws_scale(
+                                        sws_ctx_encoder,
+                                        m_ffmpeg.frame_bgr->data, m_ffmpeg.frame_bgr->linesize,
+                                        0, m_ffmpeg.encoder_context->height,
+                                        m_ffmpeg.frame_encoder->data, m_ffmpeg.frame_encoder->linesize
+                                    );
+
+                                    // Free the temporary sws context
+                                    sws_freeContext(sws_ctx_encoder);
+
+                                    // Set frame PTS (presentation timestamp)
+                                    m_ffmpeg.frame_encoder->pts = av_rescale_q(packets, m_ffmpeg.encoder_context->time_base, m_ffmpeg.encoder_context->time_base);
+                                    packets++;
                                 
                                 } 
                                 else {
@@ -378,6 +481,15 @@ int main() {
     }
     if (m_ffmpeg.context) {
         avcodec_free_context(&m_ffmpeg.context);
+    }
+    if (m_ffmpeg.frame_encoder) {
+        av_frame_free(&m_ffmpeg.frame_encoder);
+    }
+    if (m_ffmpeg.packet_encoder) {
+        av_packet_free(&m_ffmpeg.packet_encoder);
+    }
+    if (m_ffmpeg.encoder_context) {
+        avcodec_free_context(&m_ffmpeg.encoder_context);
     }
 
     // Close sockets
