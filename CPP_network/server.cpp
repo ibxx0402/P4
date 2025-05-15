@@ -29,6 +29,8 @@ extern "C" {
 #define MAXLINE 1024
 #define MAX_UDP_SIZE 65507
 
+const size_t MAX_PACKET_SIZE = 1400; // Smaller than MAX_UDP_SIZE to avoid fragmentation
+
 // Extend FFmpegContext struct
 struct FFmpegContext {
     const AVCodec* codec;
@@ -396,11 +398,6 @@ int main() {
                                     cv::Mat frame(m_ffmpeg.context->height, m_ffmpeg.context->width, CV_8UC3);
                                     memcpy(frame.data, m_ffmpeg.frame_bgr->data[0], frame.step * frame.rows);
 
-                                    cv::imshow("Video", frame);
-                                    if (cv::waitKey(1) == 27) { // Exit on 'ESC' key
-                                        break;
-                                    }
-
                                     // Create a separate sws context for BGR to YUV conversion
                                     SwsContext* sws_ctx_encoder = sws_getContext(
                                         m_ffmpeg.encoder_context->width, m_ffmpeg.encoder_context->height, AV_PIX_FMT_BGR24,
@@ -427,7 +424,65 @@ int main() {
                                     // Set frame PTS (presentation timestamp)
                                     m_ffmpeg.frame_encoder->pts = av_rescale_q(packets, m_ffmpeg.encoder_context->time_base, m_ffmpeg.encoder_context->time_base);
                                     packets++;
-                                
+
+                                    // Send the frame to the encoder
+                                    int ret = avcodec_send_frame(m_ffmpeg.encoder_context, m_ffmpeg.frame_encoder);
+                                    if (ret < 0) {
+                                        std::cerr << "Error sending frame for encoding" << std::endl;
+                                    } else {
+                                        // Get the encoded packets
+                                        while (ret >= 0) {
+                                            ret = avcodec_receive_packet(m_ffmpeg.encoder_context, m_ffmpeg.packet_encoder);
+                                            if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+                                                // Need more input or end of stream
+                                                break;
+                                            } else if (ret < 0) {
+                                                std::cerr << "Error during encoding" << std::endl;
+                                                break;
+                                            }
+
+                                            // Successfully got an encoded packet, send it to the client
+                                            if (client_registered) {
+                                                // Send the encoded packet to the registered client
+                                                size_t packet_size = m_ffmpeg.packet_encoder->size;
+                                                
+                                                // Split into smaller packets if needed (to avoid UDP fragmentation)
+                                                
+                                                // Send header with information about the packet
+                                                uint8_t header[8];
+                                                // First 4 bytes: total size of encoded frame
+                                                header[0] = (packet_size >> 24) & 0xFF;
+                                                header[1] = (packet_size >> 16) & 0xFF;
+                                                header[2] = (packet_size >> 8) & 0xFF;
+                                                header[3] = packet_size & 0xFF;
+                                                // Next 4 bytes: packet timestamp
+                                                uint32_t timestamp = packets; // Use packet counter as timestamp
+                                                header[4] = (timestamp >> 24) & 0xFF;
+                                                header[5] = (timestamp >> 16) & 0xFF;
+                                                header[6] = (timestamp >> 8) & 0xFF;
+                                                header[7] = timestamp & 0xFF;
+                                                
+                                                // Send header
+                                                sendto(client_sock, header, sizeof(header), 0, 
+                                                       (struct sockaddr *)&registered_client_addr, registered_client_len);
+                                                
+                                                // Send data in chunks
+                                                for (size_t offset = 0; offset < packet_size; offset += MAX_PACKET_SIZE) {
+                                                    size_t chunk_size = std::min(MAX_PACKET_SIZE, packet_size - offset);
+                                                    sendto(client_sock, m_ffmpeg.packet_encoder->data + offset, chunk_size, 0, 
+                                                           (struct sockaddr *)&registered_client_addr, registered_client_len);
+                                                    
+                                                    // Small delay to prevent overwhelming the network or receiver
+                                                    usleep(1000); // 1ms delay between chunks
+                                                }
+                                                
+                                                std::cout << "Sent encoded frame: " << packet_size << " bytes to client" << std::endl;
+                                            }
+                                            
+                                            // Unref the packet for reuse
+                                            av_packet_unref(m_ffmpeg.packet_encoder);
+                                        }
+                                    }
                                 } 
                                 else {
                                     std::cerr << "Error decoding frame: " << av_err2str(receive_result) << std::endl;
