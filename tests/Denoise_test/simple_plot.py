@@ -95,7 +95,10 @@ def plot_settings(method, avg_score_array, noise_strength, avg_baseline_score):
         for idx in psnr_high_indices:
             axs[1].axvline(x=idx, color='blue', linestyle='--', label=f'| Diameter: {round(diameter_column[idx])} | S_Color: {round(sigma_colour_column[idx])} | S_Space: {round(sigma_space_column[idx])} |')
 
+
     elif method == "median_blur":
+        axs[0].plot(ssim_column)
+        axs[1].plot(psnr_column)
         ksize_column = avg_score_array[:, 2]
 
         #SSIM plot
@@ -105,6 +108,7 @@ def plot_settings(method, avg_score_array, noise_strength, avg_baseline_score):
         #PSNR plot
         for idx in psnr_high_indices:
             axs[1].axvline(x=idx, color='blue', linestyle='--', label=f'| Kernel_size:  {round(ksize_column[idx])} |')
+
        
     elif method == "fastnlmeans":
         h_column = avg_score_array[:, 2]
@@ -184,12 +188,12 @@ def plot_settings(method, avg_score_array, noise_strength, avg_baseline_score):
     )
 
     #save the figure
-    #plt.savefig(f"tests/plots/{method}_{noise_strength}.pdf", format='pdf', dpi=2400, bbox_inches='tight')
-    plt.show()
+    plt.savefig(f"tests/plots/{method}_{noise_strength}.pdf", format='pdf', dpi=2400, bbox_inches='tight')
+    #plt.show()
 
 def main():
     denoise_list = ["gaussian", "bilateral", "median", "fastnlmeans"]
-    denoise_list = ["fastnlmeans"]
+    #denoise_list = ["bilateral"]
 
     for denoise_type in denoise_list:
         noise_strength = [5, 10, 15, 20]
@@ -216,12 +220,9 @@ def main():
             method_list = ['fastnlmeans']
 
         for method in method_list:
-            baseline_score_array = np.load("tests/baseline_score.npy")
-
-            avg_baseline_score = np.zeros(2)
-            avg_baseline_score[0] = np.average(baseline_score_array[:, 0])
-            avg_baseline_score[1] = np.average(baseline_score_array[:, 1])
-
+            avg_baseline_score = np.load("tests/baseline_score.npy")
+            
+            i=0
             for noise in noise_strength:
                 with open(f"{path}{method}_estimate_noise_{noise}.npy", "rb") as f:
                     noise_estimate_array = np.load(f)
@@ -234,7 +235,17 @@ def main():
                 with open(f"{path}{method}_avg_score_{noise}.npy", "rb") as f:
                     avg_score_array = np.load(f)
 
-                    plot_settings(method, avg_score_array, noise, avg_baseline_score)
+                    plot_settings(method, avg_score_array, noise, avg_baseline_score[i])
+
+                    max_ssim = np.max(avg_score_array[:, 0])
+                    max_psnr = np.max(avg_score_array[:, 1])
+                    
+                    increase_ssim = (max_ssim - avg_baseline_score[i, 0]) / avg_baseline_score[i, 0] * 100
+                    increase_psnr = (max_psnr - avg_baseline_score[i, 1]) / avg_baseline_score[i, 1] * 100
+                    print(f"Method: {method}, Noise: {noise}, Increase in SSIM: {increase_ssim:.2f}%, Increase in PSNR: {increase_psnr:.2f}%")
+                
+                i+=1
+            print("\n")
 
 
 if __name__ == "__main__":

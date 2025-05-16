@@ -88,7 +88,7 @@ def main():
     h_color_list = [1, 9, 1]
 
     template_size_list = [1, 9, 2] 
-    search_size_list = [5, 25, 2] 
+    search_size_list = [1, 11, 2] 
 
     noise_strength_list = [5, 10, 15, 20]
 

@@ -161,7 +161,7 @@ int main() {
     }
 
     // Set encoder parameters
-    m_ffmpeg.encoder_context->bit_rate = 400000; // Adjust bitrate as needed
+    m_ffmpeg.encoder_context->bit_rate = 800000; // Adjust bitrate as needed
     m_ffmpeg.encoder_context->width = 1280;
     m_ffmpeg.encoder_context->height = 720;
     m_ffmpeg.encoder_context->time_base = {1, 60}; // 60 fps
@@ -173,13 +173,13 @@ int main() {
     // Apply suggested code changes for encoder context
     AVDictionary* opts = nullptr;
     // Set ultrafast preset for maximum speed (at cost of compression efficiency)
-    av_dict_set(&opts, "preset", "ultrafast", 0);
-    av_dict_set(&opts, "tune", "zerolatency", 0);
+    //av_dict_set(&opts, "preset", "ultrafast", 0);
+    //av_dict_set(&opts, "tune", "zerolatency", 0);
 
     // Modify your encoder context for speed
     m_ffmpeg.encoder_context->max_b_frames = 0;  // B-frames add latency
     m_ffmpeg.encoder_context->gop_size = 15;     // Adjust based on needs
-    m_ffmpeg.encoder_context->refs = 1;          // Fewer reference frames = faster
+    m_ffmpeg.encoder_context->refs = 2;          // Fewer reference frames = faster
 
     // Then open with these options
     if (avcodec_open2(m_ffmpeg.encoder_context, m_ffmpeg.encoder_codec, &opts) < 0) {
@@ -439,10 +439,9 @@ int main() {
 
                                     // Apply bilateral filter for denoising
                                     cv::bilateralFilter(frame, dst, 8, 10, 2);
-									
-									// Copy the filtered data back to the FFmpeg frame
+
+                                    // Copy the filtered data back to the FFmpeg frame
                                     memcpy(m_ffmpeg.frame_bgr->data[0], dst.data, dst.step * dst.rows);
-                                    
 
                                     // Create a separate sws context for BGR to YUV conversion
                                     SwsContext* sws_ctx_encoder = sws_getContext(
