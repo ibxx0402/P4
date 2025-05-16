@@ -1,4 +1,5 @@
 // Server side implementation of UDP client-server model 
+#include <opencv2/photo/cuda.hpp>
 #include <opencv2/opencv.hpp>
 #include <iostream>
 #include <cstdlib>
@@ -146,8 +147,21 @@ int main() {
     // - AMD: "h264_amf"
 
     if (!m_ffmpeg.encoder_codec) {
-        std::cerr << "Hardware encoder not found, falling back to software" << std::endl;
-        m_ffmpeg.encoder_codec = avcodec_find_encoder(AV_CODEC_ID_H264);
+        std::cerr << "Hardware encoder not found, trying AMD" << std::endl;
+        m_ffmpeg.encoder_codec = avcodec_find_encoder_by_name("h264_amf");
+
+        if (!m_ffmpeg.encoder_codec) {
+            std::cerr << "AMD encoder not found, trying Intel" << std::endl;
+            m_ffmpeg.encoder_codec = avcodec_find_encoder_by_name("h264_qsv");
+        }
+        if (!m_ffmpeg.encoder_codec) {
+            std::cerr << "Intel encoder not found, trying NVIDIA" << std::endl;
+            m_ffmpeg.encoder_codec = avcodec_find_encoder_by_name("h264_nvenc");
+        }
+        if (!m_ffmpeg.encoder_codec) {
+            std::cerr << "No hardware encoder found, using software encoder" << std::endl;
+            m_ffmpeg.encoder_codec = avcodec_find_encoder(AV_CODEC_ID_H264);
+        }
         if (!m_ffmpeg.encoder_codec) {
             std::cerr << "Encoder codec not found" << std::endl;
             exit(1);
@@ -161,7 +175,7 @@ int main() {
     }
 
     // Set encoder parameters
-    m_ffmpeg.encoder_context->bit_rate = 800000; // Adjust bitrate as needed
+    m_ffmpeg.encoder_context->bit_rate = 4000000; // Adjust bitrate as needed
     m_ffmpeg.encoder_context->width = 1280;
     m_ffmpeg.encoder_context->height = 720;
     m_ffmpeg.encoder_context->time_base = {1, 60}; // 60 fps
@@ -171,15 +185,16 @@ int main() {
     m_ffmpeg.encoder_context->pix_fmt = AV_PIX_FMT_YUV420P;
 
     // Apply suggested code changes for encoder context
-    AVDictionary* opts = nullptr;
+    AVDictionary* opts = nullptr;,
     // Set ultrafast preset for maximum speed (at cost of compression efficiency)
-    //av_dict_set(&opts, "preset", "ultrafast", 0);
-    //av_dict_set(&opts, "tune", "zerolatency", 0);
+    av_dict_set(&opts, "preset", "veryfast", 0); //ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow
+    av_dict_set(&opts, "tune", "zerolatency", 0); //zerolatency, fastdecode, 
 
     // Modify your encoder context for speed
     m_ffmpeg.encoder_context->max_b_frames = 0;  // B-frames add latency
     m_ffmpeg.encoder_context->gop_size = 15;     // Adjust based on needs
     m_ffmpeg.encoder_context->refs = 2;          // Fewer reference frames = faster
+
 
     // Then open with these options
     if (avcodec_open2(m_ffmpeg.encoder_context, m_ffmpeg.encoder_codec, &opts) < 0) {
@@ -192,9 +207,20 @@ int main() {
     if (m_ffmpeg.encoder_codec) {
         const char* codec_name = m_ffmpeg.encoder_codec->name;
         std::cout << "Using encoder: " << codec_name;
+        
         if (strcmp(codec_name, "h264_videotoolbox") == 0) {
             std::cout << " (HARDWARE ACCELERATED)";
-        } else {
+
+        } else if (strcmp(codec_name, "h264_nvenc") == 0) {
+            std::cout << " (NVIDIA HARDWARE ACCELERATED)";
+        } 
+        else if (strcmp(codec_name, "h264_qsv") == 0) {
+            std::cout << " (INTEL HARDWARE ACCELERATED)";
+        } 
+        else if (strcmp(codec_name, "h264_amf") == 0) {
+            std::cout << " (AMD HARDWARE ACCELERATED)";
+        } 
+        else {
             std::cout << " (SOFTWARE)";
         }
         std::cout << std::endl;
@@ -438,7 +464,9 @@ int main() {
                                     cv::Mat dst;
 
                                     // Apply bilateral filter for denoising
-                                    cv::bilateralFilter(frame, dst, 8, 10, 2);
+                                    //cv::bilateralFilter(frame, dst, 8, 10, 2);
+
+                                    cv::cuda::fastNlMeansDenoisingColored(frame, dst, 2, 3, 7, 3);
 
                                     // Copy the filtered data back to the FFmpeg frame
                                     memcpy(m_ffmpeg.frame_bgr->data[0], dst.data, dst.step * dst.rows);
