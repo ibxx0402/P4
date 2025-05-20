@@ -117,5 +117,5 @@ vlc udp://@:<port>
 
 Hvis man ønsker at ændre på encoding, framerate, size, denoise. 
 ```
-rpicam-vid --level 4 --framerate 15 --width 1280 --height 720 --save-pts timestamp.pts --denoise cdn_off -n -t 0 -n --inline -o udp://192.168.0.107:9999 --post-process-file='/home/comtek450/rpicam-apps/assets/fast_cv_denoise.json'
+rpicam-vid --level 4 --framerate 15 --width 1280 --height 720 --save-pts timestamp.pts --denoise off -n -t 0 -n --inline -o udp://192.168.0.107:9999 --post-process-file='/home/comtek450/rpicam-apps/assets/fast_cv_denoise.json'
 ```
