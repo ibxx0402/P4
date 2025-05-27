@@ -1,18 +1,3 @@
-/* SPDX-License-Identifier: BSD-2-Clause */
-/*
- * sobel_cv_stage.cpp - Sobel/Bilateral filter with frame logging and noise estimation.
- *
- * This module captures the image, logs the current timestamp and frame label,
- * estimates noise before filtering, applies bilateral filtering, and then
- * estimates noise after filtering.
- *
- * The log file now contains a line for each frame with:
- *  label, time string, ts_ms, sigma_before, sigma_after.
- *
- * Note: The text overlay with the Pi timestamp is commented out so that
- * no text is drawn on the output image.
- */
-
 #include <libcamera/stream.h>
 #include "core/rpicam_app.hpp"
 #include "post_processing_stages/post_processing_stage.hpp"
