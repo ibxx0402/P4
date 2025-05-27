@@ -1,0 +1,497 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+def plot_settings(method, avg_score_array, noise_strength, avg_baseline_score):
+    ssim_column = avg_score_array[:, 0]
+    psnr_column = avg_score_array[:, 1]
+
+    max_ssim = np.max(ssim_column)
+    max_psnr = np.max(psnr_column)
+
+
+    # Find all indices where the value is within tolerance of the max
+    ssim_high_indices = np.where(np.abs(ssim_column - max_ssim) == 0)[0]
+    psnr_high_indices = np.where(np.abs(psnr_column - max_psnr) == 0)[0]
+
+    max_ssim_index = np.argmax(ssim_column)
+    max_psnr_index = np.argmax(psnr_column)
+
+    ssim_indices = np.arange(len(ssim_column))
+    psnr_indices = np.arange(len(psnr_column))
+
+    fig, axs = plt.subplots(2, 1, figsize=(10, 6), constrained_layout=True)
+    fig.suptitle(f"{method} @{(noise_strength**0.5):.3f} std, {noise_strength} var")
+
+    # SSIM plot
+    #axs[0].plot(ssim_column, ".")
+    
+    if method == "gaussian_blur":
+        kernel_column = avg_score_array[:, 2]
+        sigma_column = avg_score_array[:, 3]
+
+        min_sigma = np.min(sigma_column)
+        max_sigma = np.max(sigma_column)
+        # Find all indices where the value is within tolerance of the max
+        max_sigma_indices = np.where(np.abs(sigma_column - max_sigma) == 0)[0]
+        min_sigma_indices = np.where(np.abs(sigma_column - min_sigma) == 0)[0]
+
+      
+        
+        for i in range(len(max_sigma_indices)):
+            max_sigma_index = max_sigma_indices[i]
+            min_sigma_index = min_sigma_indices[i]
+
+        
+            axs[0].plot(
+                ssim_indices[min_sigma_index:max_sigma_index],
+                ssim_column[min_sigma_index:max_sigma_index]
+                )
+            
+            axs[1].plot(
+                psnr_indices[min_sigma_index:max_sigma_index],
+                psnr_column[min_sigma_index:max_sigma_index]
+                )
+
+        #SSIM plot
+        for idx in ssim_high_indices:
+            axs[0].axvline(x=idx, color='r', linestyle='--', label=f'| Kernel_size: {kernel_column[idx]} | Sigma: {round(sigma_column[idx], 3)} |')
+
+        #PSNR plot
+        for idx in psnr_high_indices:
+            axs[1].axvline(x=idx, color='blue', linestyle='--', label=f'| Kernel_size: {kernel_column[idx]} | Sigma: {round(sigma_column[idx], 3)} |')
+
+    elif method == "billateral":
+        diameter_column = avg_score_array[:, 2]
+        sigma_colour_column = avg_score_array[:, 3]
+        sigma_space_column = avg_score_array[:, 4]
+
+        min_sigma_space = np.min(sigma_space_column)
+        max_sigma_space = np.max(sigma_space_column)
+        # Find all indices where the value is within tolerance of the max
+        max_sigma_space_indices = np.where(np.abs(sigma_space_column - max_sigma_space) == 0)[0]
+        min_sigma_space_indices = np.where(np.abs(sigma_space_column - min_sigma_space) == 0)[0]
+
+        for i in range(len(max_sigma_space_indices)):
+            max_sigma_index = max_sigma_space_indices[i]
+            min_sigma_index = min_sigma_space_indices[i]
+
+            axs[0].plot(
+                ssim_indices[min_sigma_index:max_sigma_index],
+                ssim_column[min_sigma_index:max_sigma_index]
+                )
+            
+            axs[1].plot(
+                psnr_indices[min_sigma_index:max_sigma_index],
+                psnr_column[min_sigma_index:max_sigma_index]
+                )
+
+        #SSIM plot
+        for idx in ssim_high_indices:
+            axs[0].axvline(x=idx, color='r', linestyle='--', label=f'| Diameter: {round(diameter_column[idx])} | S_Color: {round(sigma_colour_column[idx])} | S_Space: {round(sigma_space_column[idx])} |')
+        
+        #PSNR plot
+        for idx in psnr_high_indices:
+            axs[1].axvline(x=idx, color='blue', linestyle='--', label=f'| Diameter: {round(diameter_column[idx])} | S_Color: {round(sigma_colour_column[idx])} | S_Space: {round(sigma_space_column[idx])} |')
+
+        # Calculate improvements over baseline
+        ssim_improvement = ((max_ssim - avg_baseline_score[0]) / avg_baseline_score[0]) * 100
+        psnr_improvement = ((max_psnr - avg_baseline_score[1]) / avg_baseline_score[1]) * 100
+
+        # Add text annotations in the main plots showing improvement percentages
+        axs[0].annotate(f"+{ssim_improvement:.1f}%", 
+                     xy=(max_ssim_index, max_ssim), 
+                     xytext=(max_ssim_index, max_ssim + 0.01),
+                     ha='center', va='bottom',
+                     bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="red", alpha=0.8),
+                     fontsize=10, color='red')
+
+        axs[1].annotate(f"+{psnr_improvement:.1f}%", 
+                     xy=(max_psnr_index, max_psnr), 
+                     xytext=(max_psnr_index, max_psnr + 0.5),
+                     ha='center', va='bottom',
+                     bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="blue", alpha=0.8),
+                     fontsize=10, color='blue')
+
+        # Get the optimal diameter from the best SSIM score
+        best_diameter = diameter_column[max_ssim_index]
+        
+        # Create a dedicated heatmap for SSIM - for the optimal diameter
+        plt.figure(figsize=(10, 8))
+        plt.suptitle(f"Bilateral Filter Parameter Analysis (Noise Var={noise_strength})", fontsize=14)
+        
+        # Filter data for the optimal diameter
+        opt_mask = (diameter_column == best_diameter)
+        
+        if np.sum(opt_mask) > 0:
+            sigma_color_values = sigma_colour_column[opt_mask]
+            sigma_space_values = sigma_space_column[opt_mask]
+            ssim_values = ssim_column[opt_mask]
+            
+            # Create pivot table for heatmap
+            sigma_color_unique = np.sort(np.unique(sigma_color_values))
+            sigma_space_unique = np.sort(np.unique(sigma_space_values))
+            
+            ssim_grid = np.full((len(sigma_space_unique), len(sigma_color_unique)), np.nan)
+            
+            for i, sigma_space_val in enumerate(sigma_space_unique):
+                for j, sigma_color_val in enumerate(sigma_color_unique):
+                    idx = (sigma_space_values == sigma_space_val) & (sigma_color_values == sigma_color_val)
+                    if np.sum(idx) > 0:
+                        ssim_grid[i, j] = ssim_values[np.where(idx)[0][0]]
+            
+            # Create heatmap
+            ax = sns.heatmap(ssim_grid, 
+                        xticklabels=sigma_color_unique, 
+                        yticklabels=sigma_space_unique,
+                        annot=True, 
+                        cmap="viridis", 
+                        fmt=".4f")
+            
+            # Find the cell with the maximum value
+            max_i, max_j = np.unravel_index(np.argmax(ssim_grid), ssim_grid.shape)
+
+            # Add a red border around the cell with the maximum value
+            from matplotlib.patches import Rectangle
+            rect = Rectangle((max_j, max_i), 1, 1, fill=False, edgecolor='red', lw=3)
+            ax.add_patch(rect)
+
+            plt.xlabel("Sigma Color")
+            plt.ylabel("Sigma Space")
+            plt.title(f"SSIM Scores (Diameter={best_diameter})")
+
+            plt.tight_layout()
+            
+            # Save this heatmap
+            plt.savefig(f"tests/plots/{method}_heatmap_ssim_d{int(best_diameter)}_{noise_strength}.pdf", 
+                        format='pdf', dpi=1200, bbox_inches='tight')
+
+        # Create a dedicated heatmap for PSNR - for the optimal diameter (could be different)
+        best_diameter_psnr = diameter_column[max_psnr_index]
+        
+        plt.figure(figsize=(10, 8))
+        plt.suptitle(f"Bilateral Filter Parameter Analysis - PSNR (Noise Var={noise_strength})", fontsize=14)
+        
+        # Filter data for the optimal diameter based on PSNR
+        opt_mask = (diameter_column == best_diameter_psnr)
+        
+        if np.sum(opt_mask) > 0:
+            sigma_color_values = sigma_colour_column[opt_mask]
+            sigma_space_values = sigma_space_column[opt_mask]
+            psnr_values = psnr_column[opt_mask]
+            
+            # Create pivot table for heatmap
+            sigma_color_unique = np.sort(np.unique(sigma_color_values))
+            sigma_space_unique = np.sort(np.unique(sigma_space_values))
+            
+            psnr_grid = np.full((len(sigma_space_unique), len(sigma_color_unique)), np.nan)
+            
+            for i, sigma_space_val in enumerate(sigma_space_unique):
+                for j, sigma_color_val in enumerate(sigma_color_unique):
+                    idx = (sigma_space_values == sigma_space_val) & (sigma_color_values == sigma_color_val)
+                    if np.sum(idx) > 0:
+                        psnr_grid[i, j] = psnr_values[np.where(idx)[0][0]]
+            
+            # Create heatmap
+            ax = sns.heatmap(psnr_grid, 
+                        xticklabels=sigma_color_unique, 
+                        yticklabels=sigma_space_unique,
+                        annot=True, 
+                        cmap="viridis", 
+                        fmt=".2f")
+            
+            # Find the cell with the maximum value
+            max_i, max_j = np.unravel_index(np.argmax(psnr_grid), psnr_grid.shape)
+
+            # Add a red border around the cell with the maximum value
+            from matplotlib.patches import Rectangle
+            rect = Rectangle((max_j, max_i), 1, 1, fill=False, edgecolor='red', lw=3)
+            ax.add_patch(rect)
+
+            plt.xlabel("Sigma Color")
+            plt.ylabel("Sigma Space")
+            plt.title(f"PSNR Scores (Diameter={best_diameter_psnr})")
+
+            plt.tight_layout()
+            
+            # Save this heatmap
+            plt.savefig(f"tests/plots/{method}_heatmap_psnr_d{int(best_diameter_psnr)}_{noise_strength}.pdf", 
+                        format='pdf', dpi=1200, bbox_inches='tight')
+
+    elif method == "median_blur":
+        axs[0].plot(ssim_column)
+        axs[1].plot(psnr_column)
+        ksize_column = avg_score_array[:, 2]
+
+        #SSIM plot
+        for idx in ssim_high_indices:
+            axs[0].axvline(x=idx, color='r', linestyle='--', label=f'| Kernel_size:  {round(ksize_column[idx])} |')
+    
+        #PSNR plot
+        for idx in psnr_high_indices:
+            axs[1].axvline(x=idx, color='blue', linestyle='--', label=f'| Kernel_size:  {round(ksize_column[idx])} |')
+
+       
+    elif method == "fastnlmeans":
+        h_column = avg_score_array[:, 2]
+        h_color_column = avg_score_array[:, 3]
+        template_size_column = avg_score_array[:, 4]
+        search_size_column = avg_score_array[:, 5]
+
+        # Find index of the maximum SSIM score
+        max_ssim_idx = np.argmax(ssim_column)
+        
+        # Get the parameter values at this index
+        best_h = h_column[max_ssim_idx]
+        best_h_color = h_color_column[max_ssim_idx]
+
+        
+        # Continue with your existing plotting code...
+        min_search_size = np.min(search_size_column)
+        max_search_size = np.max(search_size_column)
+        max_search_size_indices = np.where(np.abs(search_size_column - max_search_size) == 0)[0]
+        min_search_size_indices = np.where(np.abs(search_size_column - min_search_size) == 0)[0]
+
+        for i in range(len(max_search_size_indices)):
+            max_index = max_search_size_indices[i]
+            min_index = min_search_size_indices[i]
+
+            axs[0].plot(
+                ssim_indices[min_index:max_index],
+                ssim_column[min_index:max_index]
+                )
+            
+            axs[1].plot(
+                psnr_indices[min_index:max_index],
+                psnr_column[min_index:max_index]
+                )
+
+        # SSIM plot
+        for idx in ssim_high_indices:
+            axs[0].axvline(x=idx, color='r', linestyle='--', 
+                          label=f'| H: {round(h_column[idx])} | H_colour: {round(h_color_column[idx])} | Template: {round(template_size_column[idx])} | Search: {round(search_size_column[idx])} |')
+        
+        # PSNR plot
+        for idx in psnr_high_indices:
+            axs[1].axvline(x=idx, color='blue', linestyle='--', 
+                          label=f'| H: {round(h_column[idx])} | H_colour: {round(h_color_column[idx])} | Template: {round(template_size_column[idx])} | Search: {round(search_size_column[idx])} |')
+        
+        # Calculate improvements over baseline
+        ssim_improvement = ((max_ssim - avg_baseline_score[0]) / avg_baseline_score[0]) * 100
+        psnr_improvement = ((max_psnr - avg_baseline_score[1]) / avg_baseline_score[1]) * 100
+
+        # Add text annotations in the main plots showing improvement percentages
+        axs[0].annotate(f"+{ssim_improvement:.1f}%", 
+                     xy=(max_ssim_index, max_ssim), 
+                     xytext=(max_ssim_index, max_ssim + 0.01),
+                     ha='center', va='bottom',
+                     bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="red", alpha=0.8),
+                     fontsize=10, color='red')
+
+        axs[1].annotate(f"+{psnr_improvement:.1f}%", 
+                     xy=(max_psnr_index, max_psnr), 
+                     xytext=(max_psnr_index, max_psnr + 0.5),
+                     ha='center', va='bottom',
+                     bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="blue", alpha=0.8),
+                     fontsize=10, color='blue')
+
+        # Create a dedicated heatmap specifically for template_size=3 and search_size=7
+        plt.figure(figsize=(10, 8))
+        plt.suptitle(f"FastNLMeans Parameter Analysis - SSIM (Noise Var={noise_strength})\nImprovement: +{ssim_improvement:.1f}%", fontsize=14)
+        # Filter data for the optimal template_size and search_size
+        opt_mask = (template_size_column == template_size_column[max_ssim_index] ) & (search_size_column == search_size_column[max_ssim_index])
+        
+        if np.sum(opt_mask) > 0:
+            h_values = h_column[opt_mask]
+            h_color_values = h_color_column[opt_mask]
+            ssim_values = ssim_column[opt_mask]
+            
+            # Create pivot table for heatmap
+            h_unique = np.sort(np.unique(h_values))
+            h_color_unique = np.sort(np.unique(h_color_values))
+            
+            ssim_grid = np.full((len(h_unique), len(h_color_unique)), np.nan)
+            
+            for i, h_val in enumerate(h_unique):
+                for j, h_color_val in enumerate(h_color_unique):
+                    idx = (h_values == h_val) & (h_color_values == h_color_val)
+                    if np.sum(idx) > 0:
+                        ssim_grid[i, j] = ssim_values[np.where(idx)[0][0]]
+            
+            # Create heatmap
+            ax = sns.heatmap(ssim_grid, 
+                        xticklabels=h_color_unique, 
+                        yticklabels=h_unique,
+                        annot=True, 
+                        cmap="viridis", 
+                        fmt=".4f")
+            
+            # Find the cell with the maximum value
+            max_i, max_j = np.unravel_index(np.argmax(ssim_grid), ssim_grid.shape)
+
+            # Add a red border around the cell with the maximum value
+            from matplotlib.patches import Rectangle
+            rect = Rectangle((max_j, max_i), 1, 1, fill=False, edgecolor='red', lw=3)
+            ax.add_patch(rect)
+
+            plt.xlabel("h_color value")
+            plt.ylabel("h value")
+            plt.title(f"SSIM Scores (Template Size={template_size_column[max_ssim_index]}, Search Size={search_size_column[max_ssim_index]})")
+
+            plt.tight_layout()
+            
+            # Save this heatmap
+            plt.savefig(f"tests/plots/{method}_heatmap_ssim_t{template_size_column[max_ssim_index]}_s{search_size_column[max_ssim_index]}_{noise_strength}.pdf", format='pdf', dpi=1200, bbox_inches='tight')
+
+        # Create a dedicated heatmap specifically for PSNR
+        plt.figure(figsize=(10, 8))
+        psnr_improvement = ((max_psnr - avg_baseline_score[1]) / avg_baseline_score[1]) * 100
+        plt.suptitle(f"FastNLMeans Parameter Analysis - PSNR (Noise Var={noise_strength})\nImprovement: +{psnr_improvement:.1f}%", fontsize=14)
+        
+        # Filter data for the optimal template_size and search_size
+        opt_mask = (template_size_column == template_size_column[max_psnr_index]) & (search_size_column == search_size_column[max_psnr_index])
+        
+        if np.sum(opt_mask) > 0:
+            h_values = h_column[opt_mask]
+            h_color_values = h_color_column[opt_mask]
+            psnr_values = psnr_column[opt_mask]
+            
+            # Create pivot table for heatmap
+            h_unique = np.sort(np.unique(h_values))
+            h_color_unique = np.sort(np.unique(h_color_values))
+            
+            psnr_grid = np.full((len(h_unique), len(h_color_unique)), np.nan)
+            
+            for i, h_val in enumerate(h_unique):
+                for j, h_color_val in enumerate(h_color_unique):
+                    idx = (h_values == h_val) & (h_color_values == h_color_val)
+                    if np.sum(idx) > 0:
+                        psnr_grid[i, j] = psnr_values[np.where(idx)[0][0]]
+            
+            # Create heatmap
+            ax = sns.heatmap(psnr_grid, 
+                        xticklabels=h_color_unique, 
+                        yticklabels=h_unique,
+                        annot=True, 
+                        cmap="viridis", 
+                        fmt=".2f")  # Use fewer decimal places for PSNR as values are larger
+            
+            # Find the cell with the maximum value
+            max_i, max_j = np.unravel_index(np.argmax(psnr_grid), psnr_grid.shape)
+
+            # Add a red border around the cell with the maximum value
+            rect = Rectangle((max_j, max_i), 1, 1, fill=False, edgecolor='red', lw=3)
+            ax.add_patch(rect)
+
+            plt.xlabel("h_color value")
+            plt.ylabel("h value")
+            plt.title(f"PSNR Scores (Template Size={template_size_column[max_psnr_index]}, Search Size={search_size_column[max_psnr_index]})")
+
+            plt.tight_layout()
+            
+            # Save this heatmap
+            plt.savefig(f"tests/plots/{method}_heatmap_psnr_t{template_size_column[max_psnr_index]}_s{search_size_column[max_psnr_index]}_{noise_strength}.pdf", format='pdf', dpi=1200, bbox_inches='tight')
+
+    axs[0].axhline(y=ssim_column[max_ssim_index], color='red', linestyle=':', label=f'Max SSIM value={ssim_column[max_ssim_index]:.4f}')
+    axs[0].axhline(y=avg_baseline_score[0], color='black', linestyle=':', label=f'Baseline Value={avg_baseline_score[0]:.4f}')
+    axs[0].set_ylabel("SSIM")
+    axs[0].set_ylim(0.80, 1)
+
+    # PSNR plot
+    axs[1].axhline(y=psnr_column[max_psnr_index], color='blue', linestyle=':', label=f'Max PSNR value={psnr_column[max_psnr_index]:.4f}')
+    axs[1].axhline(y=avg_baseline_score[1], color='black', linestyle=':', label=f'Baseline value={avg_baseline_score[1]:.4f}')
+    axs[1].set_ylabel("PSNR")
+    axs[1].set_xlabel("Total Steps")
+    axs[1].set_ylim(25, 46)
+
+    # Collect handles and labels from both axes
+    handles0, labels0 = axs[0].get_legend_handles_labels()
+    handles1, labels1 = axs[1].get_legend_handles_labels()
+
+    # Pad the shorter list with empty entries so both have the same length
+    max_len = max(len(handles0), len(handles1))
+    while len(handles0) < max_len:
+        handles0.append(plt.Line2D([], [], color='none'))
+        labels0.append("")
+    while len(handles1) < max_len:
+        handles1.append(plt.Line2D([], [], color='none'))
+        labels1.append("")
+
+    # Concatenate for two columns: first all SSIM, then all PSNR
+    handles = handles0 + handles1
+    labels = labels0 + labels1
+
+    # Place a single legend at the bottom center, two columns
+    fig.legend(
+        handles, labels,
+        loc='lower center',
+        bbox_to_anchor=(0.5, -0.02-0.03*((len(labels)+1)//2)),
+        ncol=2,
+        fontsize='small', 
+        columnspacing=2.0
+    )
+
+    #save the figure
+    plt.savefig(f"tests/plots/{method}_{noise_strength}.pdf", format='pdf', dpi=2400, bbox_inches='tight')
+    #plt.show()
+
+def main():
+    #denoise_list = ["gaussian", "bilateral", "median", "fastnlmeans"]
+    denoise_list = ["fastnlmeans"]
+
+    for denoise_type in denoise_list:
+        noise_strength = [5, 10, 15, 20]
+
+        if denoise_type == "gaussian":
+            path = "tests/gaussian_test_files/"
+            method_list = ['gaussian_blur',]
+
+            """if denoise_type == "guassian":
+            path = "guassian_test_files/"
+            #method_list = ['denoise', 'unsharp', 'high_pass']
+            method_list = ['denoise'] """
+        
+        elif denoise_type == "bilateral":
+            path = "tests/bilateral_test_files"
+            method_list = ['billateral']
+
+        elif denoise_type == "median":
+            path = "tests/median_test_files/"
+            method_list = ['median_blur']
+
+        elif denoise_type == "fastnlmeans":
+            path = "tests/fastnlmeans_test_files/"
+            method_list = ['fastnlmeans']
+
+        for method in method_list:
+            avg_baseline_score = np.load("tests/baseline_score.npy")
+            
+            i=0
+            for noise in noise_strength:
+                with open(f"{path}{method}_estimate_noise_{noise}.npy", "rb") as f:
+                    noise_estimate_array = np.load(f)
+                    avg_noise = np.average(noise_estimate_array[:, 1])
+                    real_noise = np.average(noise_estimate_array[:, 0])
+            
+                    #print(f"Real noise: {real_noise}, Estimated noise: {avg_noise}, procentage error: {abs(real_noise - avg_noise) / real_noise * 100:.2f}%")
+
+
+                with open(f"{path}{method}_avg_score_{noise}.npy", "rb") as f:
+                    avg_score_array = np.load(f)
+
+                    plot_settings(method, avg_score_array, noise, avg_baseline_score[i])
+
+                    max_ssim = np.max(avg_score_array[:, 0])
+                    max_psnr = np.max(avg_score_array[:, 1])
+                    
+                    increase_ssim = (max_ssim - avg_baseline_score[i, 0]) / avg_baseline_score[i, 0] * 100
+                    increase_psnr = (max_psnr - avg_baseline_score[i, 1]) / avg_baseline_score[i, 1] * 100
+                    print(f"Method: {method}, Noise: {noise}, Increase in SSIM: {increase_ssim:.2f}%, Increase in PSNR: {increase_psnr:.2f}%")
+                
+                i+=1
+            print("\n")
+
+
+if __name__ == "__main__":
+    main()
+
