@@ -24,11 +24,10 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
-#define SERVER_IP "192.168.0.106"
+#define SERVER_IP "192.168.0.112"
 #define PORT 9995
 #define CLIENT_PORT 9998
-#define MAXLINE 65507 // Max UDP packet size
-#define MAX_BUFFER_SIZE 1000000 // 1MB max buffer size
+#define MAXLINE 1400 // Max UDP packet size
 
 struct FFmpegContext {
     const AVCodec* codec;
@@ -40,7 +39,7 @@ struct FFmpegContext {
     int bgr_buffer_size;
 };
 
-// Structure to hold frame reconstruction data
+// Structure to hold frame reconstruction data.
 struct FrameData {
     std::vector<uint8_t> data;
     size_t expected_size;
@@ -240,28 +239,6 @@ int main() {
                     m_ffmpeg.frame_bgr->linesize[0]
                 );
 
-                // Inside the frame processing loop, before accessing the log file
-
-                // Generate timestamp for when the frame is being displayed
-                auto now = std::chrono::system_clock::now();
-                uint64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                    now.time_since_epoch()).count();
-                std::time_t time_tt = std::chrono::system_clock::to_time_t(now);
-                std::tm *tm_ptr = std::localtime(&time_tt);
-                char time_str[50];
-                std::strftime(time_str, sizeof(time_str), "%H:%M:%S", tm_ptr);
-
-                std::string log_path =  "client_log.txt";
-
-                std::ofstream pi_log(log_path, std::ios::app);
-                if (pi_log.is_open()) {
-                    // Log format: label time_string ts_ms sigma_before sigma_after
-                    pi_log << time_str << " " << ts_ms << "\n";
-                    pi_log.close();
-                } else {
-                    std::cerr << "Unable to open log.txt for writing at path: " << log_path << "\n";
-                }
-
                 // Calculate FPS
                 auto current_time = std::chrono::high_resolution_clock::now();
                 int64_t time_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -271,29 +248,10 @@ int main() {
                     // Calculate instantaneous FPS
                     double frame_time = (time_ns - prev_frame_time) / 1000000000.0;
                     double instant_fps = 1.0 / frame_time;
-                    
-                    // Add to history for smoothing
-                    fps_history.push_back(instant_fps);
-                    if (fps_history.size() > FPS_SMOOTHING) {
-                        fps_history.pop_front();
-                    }
-                    
-                    // Calculate average FPS
-                    fps = 0;
-                    for (const auto& f : fps_history) {
-                        fps += f;
-                    }
-                    fps /= fps_history.size();
+                    fps = instant_fps;
+
                 }
                 prev_frame_time = time_ns;
-
-                int label = frame_counter++;
-                std::stringstream overlay_text;
-                overlay_text << "Frame " << label << " " << time_str << " " << ts_ms;
-
-                // Define the position of the overlay text
-                cv::putText(frame, overlay_text.str(), cv::Point(10, frame.rows - 40),
-                cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(255), 2);
 
                 // Overlay FPS on the frame
                 std::stringstream fps_text;

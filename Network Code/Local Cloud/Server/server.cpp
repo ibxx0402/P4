@@ -26,11 +26,10 @@ extern "C" {
 #include <libavutil/imgutils.h> // For av_image_get_buffer_size and av_image_fill_arrays
 }
 
-#define SERVER_IP "192.168.0.104"
+#define SERVER_IP "192.168.0.112"
 #define CLIENT_PORT 9998
 #define CAMERA_PORT 9999
 #define MAXLINE 1024
-#define MAX_UDP_SIZE 65507
 
 const size_t MAX_PACKET_SIZE = 1400; // Smaller than MAX_UDP_SIZE to avoid fragmentation
 
@@ -99,11 +98,11 @@ size_t findNalStartCode(const std::vector<uint8_t>& buffer, size_t start_pos = 0
 int main() { 
     // Initialize libav used to decode H.264
     avformat_network_init();
-    m_ffmpeg.codec = avcodec_find_decoder(AV_CODEC_ID_H264);
-    if (!m_ffmpeg.codec) 
-    {
-        fprintf(stderr, "Codec not found\n");
-        exit(1);
+    m_ffmpeg.codec = avcodec_find_decoder_by_name("h264_cuvid"); // or other HW decoders
+    if (!m_ffmpeg.codec) {
+        // Fall back to software decoder
+        m_ffmpeg.codec = avcodec_find_decoder(AV_CODEC_ID_H264);
+
     }
     m_ffmpeg.context = avcodec_alloc_context3(m_ffmpeg.codec);
     if (!m_ffmpeg.context)
@@ -112,11 +111,13 @@ int main() {
         exit(1);
     }
 
+    
+
     // Add error resilience flags
     m_ffmpeg.context->err_recognition = AV_EF_CAREFUL;
     m_ffmpeg.context->flags |= AV_CODEC_FLAG_LOW_DELAY;
     m_ffmpeg.context->flags2 |= AV_CODEC_FLAG2_CHUNKS;
-    m_ffmpeg.context->thread_count = 4;
+    m_ffmpeg.context->thread_count = 4; // Use multiple threads for decoding
     m_ffmpeg.context->thread_type = FF_THREAD_SLICE;
     m_ffmpeg.context->strict_std_compliance = FF_COMPLIANCE_EXPERIMENTAL;
 
@@ -142,7 +143,7 @@ int main() {
     }
 
     // Initialize encoder
-     m_ffmpeg.encoder_codec = avcodec_find_encoder_by_name("h264_videotoolbox");
+    m_ffmpeg.encoder_codec = avcodec_find_encoder_by_name("h264_videotoolbox");
     if (!m_ffmpeg.encoder_codec) {
         std::cerr << "No suitable encoder found" << std::endl;
         exit(1);
@@ -155,18 +156,20 @@ int main() {
         exit(1);
     }
 
+
     // Set encoder parameters
     m_ffmpeg.encoder_context->bit_rate = 1000000; // Adjust bitrate as needed
     m_ffmpeg.encoder_context->width = 1280;       // Set valid width
     m_ffmpeg.encoder_context->height = 720;      // Set valid height
-    m_ffmpeg.encoder_context->time_base = {1, 50}; // 50 fps
-    m_ffmpeg.encoder_context->framerate = {50, 1};
+    m_ffmpeg.encoder_context->time_base = {1, 60}; // 15 fps
+    m_ffmpeg.encoder_context->framerate = {60, 1};
     m_ffmpeg.encoder_context->gop_size = 60;      // Group of pictures size
     m_ffmpeg.encoder_context->max_b_frames = 0;   // Disable B-frames for low latency
     m_ffmpeg.encoder_context->pix_fmt = AV_PIX_FMT_YUV420P; // Use YUV420P pixel format
-    m_ffmpeg.encoder_context->refs = 2; 
+    m_ffmpeg.encoder_context->refs = 1;          // Fewer reference frames = faster
     //m_ffmpeg.encoder_context->thread_count = 16; // More reasonable value
     m_ffmpeg.encoder_context->thread_type = FF_THREAD_FRAME; // Use frame-level threading
+
 
     AVDictionary* opts = nullptr;
     av_dict_set(&opts, "preset", "ultrafast", 0); // Set encoding preset
@@ -178,30 +181,7 @@ int main() {
     }
 
     av_dict_free(&opts); // Free the dictionary
-
-    // Add after encoder initialization
-    if (m_ffmpeg.encoder_codec) {
-        const char* codec_name = m_ffmpeg.encoder_codec->name;
-        std::cout << "Using encoder: " << codec_name;
-        
-        if (strcmp(codec_name, "h264_videotoolbox") == 0) {
-            std::cout << " (HARDWARE ACCELERATED)";
-
-        } else if (strcmp(codec_name, "h264_nvenc") == 0) {
-            std::cout << " (NVIDIA HARDWARE ACCELERATED)";
-        } 
-        else if (strcmp(codec_name, "h264_qsv") == 0) {
-            std::cout << " (INTEL HARDWARE ACCELERATED)";
-        } 
-        else if (strcmp(codec_name, "h264_amf") == 0) {
-            std::cout << " (AMD HARDWARE ACCELERATED)";
-        } 
-        else {
-            std::cout << " (SOFTWARE)";
-        }
-        std::cout << std::endl;
-    }
-
+   
     std::cout << "Using encoder: " << m_ffmpeg.encoder_codec->name << std::endl;
 
     // Allocate frame for encoding
@@ -283,15 +263,9 @@ int main() {
     }
 
     // Set receive buffer size to be large enough for video frames
-    int rcvbuf = 16 * 1024 * 1024; // 16MB receive buffer
+    int rcvbuf = 1024 * 1024; // 1MB buffer
     if (setsockopt(camera_sock, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf)) < 0) {
         perror("setsockopt(SO_RCVBUF) failed");
-    }
-
-    // Also set send buffer
-    int sndbuf = 16 * 1024 * 1024; // 16MB send buffer
-    if (setsockopt(camera_sock, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf)) < 0) {
-        perror("setsockopt(SO_SNDBUF) failed");
     }
     
     // Bind the socket with the server address 
@@ -359,16 +333,15 @@ int main() {
                                     (struct sockaddr *)&from_addr, &from_len);
                                     
                 if (data > 0 && client_registered) {
+                    std::cout << "Server: Received " << data << " bytes from camera" << std::endl;
                     // Extend our H.264 buffer with new data
                     h264_buffer.insert(h264_buffer.end(), buffer, buffer + data);
 
 
-                     // Process complete NAL units from the buffer
                     while (isCompleteNalUnit(h264_buffer)) {
                         size_t nal_start = findNalStartCode(h264_buffer);
                         size_t next_nal_start = findNalStartCode(h264_buffer, nal_start + 3);
                         
-
                         if (next_nal_start > nal_start && next_nal_start < h264_buffer.size()) {
                             // Extract complete NAL unit
                             std::vector<uint8_t> nal_unit(h264_buffer.begin() + nal_start, h264_buffer.begin() + next_nal_start);
@@ -449,29 +422,20 @@ int main() {
 
                                     // Create destination Mat for filtered result
                                     cv::Mat dst;
-                                    
-                                    // Apply bilateral filter for denoising
-                                    cv::bilateralFilter(frame, dst, 6, 10, 2);
+                                    // Apply OpenCV denoisiing 
+                                    cv::bilateralFilter(frame, dst, 8, 10, 2);
 
-                                    /* // Convert the frame to a GpuMat
-                                    cv::cuda::GpuMat gpu_frame, gpu_dst;
-                                    gpu_frame.upload(frame);
+
+                                    // Convert the frame to a GpuMat
+                                    //cv::cuda::GpuMat gpu_frame, gpu_dst;
+                                    //gpu_frame.upload(frame);
 
                                     // Apply CUDA-based denoising
-                                    cv::cuda::fastNlMeansDenoisingColored(gpu_frame, gpu_dst, 2, 3, 7, 3);
+                                    //cv::cuda::fastNlMeansDenoisingColored(gpu_frame, gpu_dst, 2, 3, 7, 3);
 
                                     // Download the result back to a standard Mat
-                                    gpu_dst.download(dst); */
+                                    //gpu_dst.download(dst); 
 
-                                    // ======Overlay====== 
-                                    //std::stringstream overlay_text;
-                                    //overlay_text << "Frame " << label << " " << time_str << " " << ts_ms;
-                                    //putText(dst, overlay_text.str(), Point(10, dst.rows - 30),
-                                    //        FONT_HERSHEY_SIMPLEX, 0.8, Scalar(255), 2);
-                                    // =======END OVERLAY=====
-                                    
-                    
-            
                                     // Copy the filtered data back to the FFmpeg frame
                                     memcpy(m_ffmpeg.frame_bgr->data[0], dst.data, dst.step * dst.rows);
 
@@ -555,8 +519,8 @@ int main() {
                                                     sendto(client_sock, m_ffmpeg.packet_encoder->data + offset, chunk_size, 0, 
                                                            (struct sockaddr *)&registered_client_addr, registered_client_len);
                                                     
-                                                    // Add a very small delay between chunks
-                                                    //usleep(500); // 0.5ms delay between chunks
+                                                    // Small delay to prevent overwhelming the network or receiver
+                                                    usleep(1000); // 1000us delay between chunks
                                                 }
                                             }
                                             
@@ -583,7 +547,7 @@ int main() {
                                 // Unref the frame to prepare for next decode
                                 av_frame_unref(m_ffmpeg.frame_yuv);
                             }
-                            
+                            // Free the packet
                             av_packet_free(&packet);
                             
                             // Remove processed NAL unit from buffer
@@ -593,7 +557,7 @@ int main() {
                             break;
                         }
                     }
-                    
+       
                     // If buffer gets too large, trim it
                     if (h264_buffer.size() > 1000000) { // 1MB threshold
                         size_t nal_start = findNalStartCode(h264_buffer);
