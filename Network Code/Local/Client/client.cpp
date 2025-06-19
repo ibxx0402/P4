@@ -23,7 +23,7 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
-#define SERVER_IP "192.168.0.134"       // Local interface IP to bind - adjust as needed
+#define SERVER_IP "192.168.0.104"       // Local interface IP to bind - adjust as needed
 #define VIDEO_PORT 9999                 // Port to listen on for video feed
 #define MAXLINE 65507                   // Maximum UDP packet size
 

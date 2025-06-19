@@ -161,12 +161,12 @@ int main() {
     m_ffmpeg.encoder_context->bit_rate = 1000000; // Adjust bitrate as needed
     m_ffmpeg.encoder_context->width = 1280;       // Set valid width
     m_ffmpeg.encoder_context->height = 720;      // Set valid height
-    m_ffmpeg.encoder_context->time_base = {1, 60}; // 15 fps
+    m_ffmpeg.encoder_context->time_base = {1, 60}; // 60 fps
     m_ffmpeg.encoder_context->framerate = {60, 1};
     m_ffmpeg.encoder_context->gop_size = 60;      // Group of pictures size
     m_ffmpeg.encoder_context->max_b_frames = 0;   // Disable B-frames for low latency
     m_ffmpeg.encoder_context->pix_fmt = AV_PIX_FMT_YUV420P; // Use YUV420P pixel format
-    m_ffmpeg.encoder_context->refs = 1;          // Fewer reference frames = faster
+    m_ffmpeg.encoder_context->refs = 2;          // Fewer reference frames = faster
     //m_ffmpeg.encoder_context->thread_count = 16; // More reasonable value
     m_ffmpeg.encoder_context->thread_type = FF_THREAD_FRAME; // Use frame-level threading
 
@@ -263,18 +263,25 @@ int main() {
     }
 
     // Set receive buffer size to be large enough for video frames
-    int rcvbuf = 1024 * 1024; // 1MB buffer
+    int rcvbuf = 64 * 1024 * 1024; // 64MB buffer
+    int sndbuf = 64 * 1024 * 1024; // 64MB send buffer
+
+
     if (setsockopt(camera_sock, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf)) < 0) {
         perror("setsockopt(SO_RCVBUF) failed");
     }
     
-    // Bind the socket with the server address 
-    if ( bind(camera_sock, (const struct sockaddr *)&camera_addr, 
-            sizeof(camera_addr)) < 0 ) 
-    { 
-        perror("bind failed"); 
-        exit(EXIT_FAILURE); 
-    } 
+    if (setsockopt(camera_sock, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf)) < 0) {
+        perror("setsockopt(SO_SNDBUF) failed");
+    }
+
+    // Bind the socket with the server address
+    if (bind(camera_sock, (const struct sockaddr *)&camera_addr,
+            sizeof(camera_addr)) < 0)
+    {
+        perror("bind failed");
+        exit(EXIT_FAILURE);
+    }
     //##################################################################################
     std::cout<<"Server: Listening for client registration on "<< SERVER_IP << ":" << CLIENT_PORT << " & " << CAMERA_PORT <<std::endl; 
     
@@ -333,7 +340,7 @@ int main() {
                                     (struct sockaddr *)&from_addr, &from_len);
                                     
                 if (data > 0 && client_registered) {
-                    std::cout << "Server: Received " << data << " bytes from camera" << std::endl;
+                    //std::cout << "Server: Received " << data << " bytes from camera" << std::endl;
                     // Extend our H.264 buffer with new data
                     h264_buffer.insert(h264_buffer.end(), buffer, buffer + data);
 
@@ -520,7 +527,7 @@ int main() {
                                                            (struct sockaddr *)&registered_client_addr, registered_client_len);
                                                     
                                                     // Small delay to prevent overwhelming the network or receiver
-                                                    usleep(1000); // 1000us delay between chunks
+                                                    //usleep(1000); // 1000us delay between chunks
                                                 }
                                             }
                                             
